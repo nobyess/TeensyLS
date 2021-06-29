@@ -25,8 +25,6 @@ SOFTWARE.
 
 */
 
-#define SERIAL_BUFFER_SIZE 256
-
 #include <Arduino.h>
 #include <Bounce.h>
 #include <elapsedMillis.h>
