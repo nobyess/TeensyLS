@@ -223,7 +223,7 @@ void loop() {
     rpm = ((currentSpindle - lastSpindle) / (float)ticksPerRev) * 2;
     lastSpindle = currentSpindle;
   }
- /*
+ /* used for troubleshooting when I was getting missed steps
   int lt = loopTime;
   if (lt < loopTimeMin) { loopTimeMin = lt; }
   if (lt > loopTimeMax) { loopTimeMax = lt; }
