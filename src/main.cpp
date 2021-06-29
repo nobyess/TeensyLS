@@ -218,6 +218,7 @@ void loop() {
     rpm = ((currentSpindle - lastSpindle) / (float)ticksPerRev) * 120;
     lastSpindle = currentSpindle;
   }
+
  /* used for troubleshooting when I was getting missed steps
   int lt = loopTime;
   if (lt < loopTimeMin) { loopTimeMin = lt; }
@@ -312,14 +313,14 @@ void processThread() {
     if (threadDirection) {
       target = offset - spindleToStep((threadNumber - sp) + spindleMod + startOffset);
       if (target < offset) { target = offset; }
-      if (target >= rightSteps) {
+      if (target >= rightSteps && !switchEnable.read()) {
         target = rightSteps;
         threading = 0;
       }
     } else {
       target = offset + spindleToStep((threadNumber - sp) + spindleMod + startOffset);
       if (target > offset) { target = offset; }
-      if (target <= leftSteps) {
+      if (target <= leftSteps && !switchEnable.read()) {
         target = leftSteps;
         threading = 0;
       }
@@ -458,7 +459,7 @@ String threadString() {
 }
 
 String rpmString() {
-  return String(abs(rpm), 0);
+  return String((rpm < 0 ? -rpm : rpm), 0);
 }
 
 String feedString() {
@@ -754,7 +755,7 @@ void trigger8() {
   int val = nex.readNumber("starts.key.val");
   switch (val) {
     case 0: //ok
-      startOffset = (1 / numStarts) * (start - 1);
+      startOffset = (1.0 / numStarts) * (start - 1);
       nexGotoPage(pageThreading);
       break;
     default:
