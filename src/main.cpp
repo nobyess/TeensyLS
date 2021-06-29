@@ -36,7 +36,6 @@ SOFTWARE.
 
 bool clock60hz;
 elapsedMillis ellapsed500ms;
-elapsedMillis ellapsed50ms;
 
 elapsedMicros loopTime;
 int loopTimeMax;
@@ -77,8 +76,6 @@ void updateIO();
 //--------------------------------------------
 // Nextion defines/variables/functions
 //--------------------------------------------
-
-#define startCmd     "page 4"
 
 #define strConvDigits 3
 
