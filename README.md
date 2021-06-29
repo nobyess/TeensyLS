@@ -1,1 +1,2 @@
-test readme
+TeensyLS. An electronic leadscrew controller for your lathe
+====================
