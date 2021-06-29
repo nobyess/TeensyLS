@@ -215,7 +215,7 @@ void loop() {
     ellapsed500ms = 0;
     clock60hz = !clock60hz;
 
-    rpm = ((currentSpindle - lastSpindle) / (float)ticksPerRev) * 2;
+    rpm = ((currentSpindle - lastSpindle) / (float)ticksPerRev) * 120;
     lastSpindle = currentSpindle;
   }
  /* used for troubleshooting when I was getting missed steps
@@ -412,12 +412,7 @@ bool closeEnough(float v1, float v2, float tolerance) {
 
 // update the Nextion based on which page is currently being displayed
 void updateNextion() {
-  String buttonText;
-  String statusText;
-
   static elapsedMillis tmrNextionUpdate;
-
-  static String inputValue;
 
   nex.NextionListen();
 
@@ -463,7 +458,7 @@ String threadString() {
 }
 
 String rpmString() {
-  return String(abs(rpm));
+  return String(abs(rpm), 0);
 }
 
 String feedString() {
