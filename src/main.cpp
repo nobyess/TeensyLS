@@ -26,6 +26,7 @@ SOFTWARE.
 */
 
 #include <Arduino.h>
+#include <EEPROM.h>
 #include <Bounce.h>
 #include <elapsedMillis.h>
 #include <AccelStepper.h>
@@ -78,15 +79,16 @@ void updateIO();
 #define strConvDigits 3
 
 #define pageIntro     0
-#define pageDebug     1
-#define pageScope     2
-#define pageDebugTxt  3
+#define pageDebug     1 //not used anymore
+#define pageScope     2 //not used anymore
+#define pageDebugTxt  3 //not used anymore
 #define pageMenu      4
 #define pageJogFeed   5
 #define pageThreading 6
 #define pageInputPos  7
 #define pageError     8
 #define pageStarts    9
+#define pageSetup     10
 
 #define keyCurrent    -8
 #define keyBS         -7
@@ -99,6 +101,8 @@ void updateIO();
 
 #define varLeftStop   0
 #define varRightStop  1
+#define varPPR        2
+#define varSPMM       3
 
 EasyNex nex(Serial5);
 
@@ -129,12 +133,8 @@ Encoder spindle(spindleA, spindleB);
 
 AccelStepper lsDriver(1, drvStep, drvDirection);
 
-#define mmPerRev      2
-#define stepsPerRev   800
-#define stepsPerMM    400
-#define stepsPerIN    10160
-
-int ticksPerRev = 2880;
+int pulsesPerRev = 2880;
+int stepsPerMM = 400;
 
 bool jogAdjust = true;
 float jogFeedMulti = .1;
@@ -157,7 +157,6 @@ float spindleMod;
 bool threadDirection;
 
 float current;
-long currentTick;
 
 float leftStop;
 long leftSteps;
@@ -195,11 +194,14 @@ void setup() {
   nex.begin(115200);
   Serial.begin(9600);
 
+  EEPROM.get(0, pulsesPerRev);
+  EEPROM.get(4, stepsPerMM);
+
   lsDriver.setAcceleration(50000);
   lsDriver.setMaxSpeed(100000);
 
   delay(2000);
-  nexGotoPage(pageMenu);
+  nexGotoPage(btnKnob.read() ? pageMenu : pageSetup);
   loopTime = 0;
 }
 
@@ -215,7 +217,7 @@ void loop() {
     ellapsed500ms = 0;
     clock60hz = !clock60hz;
 
-    rpm = ((currentSpindle - lastSpindle) / (float)ticksPerRev) * 120;
+    rpm = ((currentSpindle - lastSpindle) / (float)pulsesPerRev) * 120;
     lastSpindle = currentSpindle;
   }
 
@@ -232,8 +234,8 @@ void loop() {
 void updateMovement() {
   currentSpindle = -spindle.read();
 
-  threadNumber = floor(currentSpindle / ticksPerRev);
-  spindleMod = (currentSpindle % ticksPerRev) / (float)ticksPerRev;
+  threadNumber = floor(currentSpindle / pulsesPerRev);
+  spindleMod = (currentSpindle % pulsesPerRev) / (float)pulsesPerRev;
   
   switch (nexCurrentPage)
   {
@@ -266,7 +268,7 @@ void updateIO() {
       } else {
         knobValue--;
       }
-      if (!btnKnob.read()) {
+      if (!btnKnob.read() && !threading) {
         switch (nex.currentPageId) {
           case pageMenu:
           case pageJogFeed:
@@ -313,16 +315,28 @@ void processThread() {
     if (threadDirection) {
       target = offset - spindleToStep((threadNumber - sp) + spindleMod + startOffset);
       if (target < offset) { target = offset; }
-      if (target >= rightSteps && !switchEnable.read()) {
-        target = rightSteps;
-        threading = 0;
+      if (switchEnable.read()) {
+        if (btnRight.read()) {
+          threading = 0;
+        }
+      } else {
+        if (target >= rightSteps) {
+          target = rightSteps;
+          threading = 0;
+        }
       }
     } else {
       target = offset + spindleToStep((threadNumber - sp) + spindleMod + startOffset);
       if (target > offset) { target = offset; }
-      if (target <= leftSteps && !switchEnable.read()) {
-        target = leftSteps;
-        threading = 0;
+      if (switchEnable.read()) {
+        if (btnLeft.read()) {
+          threading = 0;
+        }
+      } else {
+        if (target <= leftSteps) {
+          target = leftSteps;
+          threading = 0;
+        }
       }
     }
 
@@ -330,13 +344,14 @@ void processThread() {
   
     lsDriver.moveTo(target);
   } else {
-    if (switchEnable.read()) { threading = false; }
-    if (!btnLeft.read() && leftStopOn) {
+    //if (switchEnable.read()) { threading = false; }
+    if (switchEnable.read() ? !btnLeft.read() : (!btnLeft.read() && leftStopOn && lsDriver.currentPosition() > leftSteps)) {
+//    if (!btnLeft.read()) {
       threadDirection = false;
       threading = true;
       sp = threadNumber - 1;
       offset = lsDriver.currentPosition();
-    } else if (!btnRight.read() && rightStopOn) {
+    } else if (switchEnable.read() ? !btnRight.read() : (!btnRight.read() && rightStopOn && lsDriver.currentPosition() < rightSteps)) {
       threadDirection = true;
       threading = true;
       sp = threadNumber - 1;
@@ -506,9 +521,7 @@ void nexShowError(String title, String description, int returnPage) {
 }
 
 void nexInputPosition(String question, int returnPage, int var, String initialValue) {
-  nex.writeStr("vis b15,1");
-  nex.writeStr("vis b11,1");
-  nex.writeStr("vis b3,1");
+  nex.writeNum("input.integer.val", 0);
   inputPositionValue = initialValue;
   inputPositionLastpage = returnPage;
   inputPositionVar = var;
@@ -518,12 +531,10 @@ void nexInputPosition(String question, int returnPage, int var, String initialVa
 }
 
 void nexInputNumber(String question, int returnPage, int var, int initialValue) {
-  nex.writeStr("vis b15,0");
-  nex.writeStr("vis b11,0");
-  nex.writeStr("vis b3,0");
+  nex.writeNum("input.integer.val", 1);
   inputPositionValue = String(initialValue);
   inputPositionLastpage = returnPage;
-  inputPositionLastpage = var;
+  inputPositionVar = var;
   nex.writeStr("input.value.txt", inputPositionValue);
   nex.writeStr("input.q.txt", question);
   nexGotoPage(pageInputPos);
@@ -572,6 +583,10 @@ void nexUpdatePage(int page)
       nex.writeNum("starts.b8.bco", numStarts == 4 ? 26051 : 65535);
       nex.writeNum("starts.b9.bco", numStarts == 5 ? 26051 : 65535);
       break;
+    case pageSetup:
+      nex.writeStr("setup.ppr.txt", String(pulsesPerRev));
+      nex.writeStr("setup.spmm.txt", String(stepsPerMM));
+      break;
   }
 }
 
@@ -609,8 +624,17 @@ void trigger0() { // handle positional input keypad buttons and display
           }
           nex.writeStr("powerfeed.rightstop.txt", (rightStopOn ? unitsToString(rightStop) : ""));
           break;
+        case varPPR:
+          pulsesPerRev = inputPositionValue.toInt();
+          EEPROM.put(0, pulsesPerRev);
+          break;
+        case varSPMM:
+          stepsPerMM = inputPositionValue.toInt();
+          EEPROM.put(4, stepsPerMM);
+          break;
       }
-      //break; don't break, just go into cancel which changes the page back
+      nexGotoPage(inputPositionLastpage);
+      break;
     case keyCancel:
       nexGotoPage(inputPositionLastpage);
       break;
@@ -654,6 +678,12 @@ void trigger0() { // handle positional input keypad buttons and display
           rightStop = 0;
           nex.writeStr("powerfeed.rightstop.txt", "---");
           break;
+        case varPPR:
+          pulsesPerRev = 2880;
+          break;
+        case varSPMM:
+          stepsPerMM = 400;
+          break;
       }
       nexGotoPage(inputPositionLastpage);
       break;
@@ -680,11 +710,6 @@ void trigger1() {
       break;
   }
 }
-
-void trigger2() { // call to get a full page update (update all data on screen for page switch)
-  //nexUpdatePage(nexCurrentPage);
-}
-
 
 void trigger6() { // handle buttons on feed menu
   switch (nex.readNumber("powerfeed.key.val")) {
@@ -770,4 +795,19 @@ void trigger8() {
       nexUpdatePage(pageStarts);
       break;
   }  
+}
+
+void trigger9() {
+  int val = nex.readNumber("setup.key.val");
+  switch (val) {
+    case -1:
+      nexGotoPage(pageMenu);
+      break;
+    case 0:
+      nexInputNumber("Spindle Pulse/Revolution", pageSetup, varPPR, pulsesPerRev);
+      break;
+    case 1:
+      nexInputNumber("Steps/MM", pageSetup, varSPMM, stepsPerMM);
+      break;
+  }
 }
