@@ -377,6 +377,8 @@ void invertUnits() {
     jogFeedSpeed = jogFeedSpeed * 25.4;
     float t = (1 / threadCount) * 25.4;
     threadCount = floor(t / 0.05) * 0.05;
+    if (threadCount > 4) { threadCount = 4; }
+
   } else {
     imperial = true;
     threadCount = floor(25.4 / threadCount);
