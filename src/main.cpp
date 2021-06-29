@@ -209,7 +209,7 @@ void setup() {
 }
 
 void loop() {
-  static int32_t lastSpindle;
+  static int32_t lastSpindle; 
 
   updateIO();
   updateMovement();
