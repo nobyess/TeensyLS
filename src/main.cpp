@@ -344,9 +344,7 @@ void processThread() {
   
     lsDriver.moveTo(target);
   } else {
-    //if (switchEnable.read()) { threading = false; }
     if (switchEnable.read() ? !btnLeft.read() : (!btnLeft.read() && leftStopOn && lsDriver.currentPosition() > leftSteps)) {
-//    if (!btnLeft.read()) {
       threadDirection = false;
       threading = true;
       sp = threadNumber - 1;
