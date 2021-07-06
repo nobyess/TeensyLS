@@ -122,12 +122,12 @@ String feedString();
 String rpmString();
 String threadString();
 
-
 void updateNextion();
-void nexInputPosition(String question, int var, String initialValue);
-void nexGotoPage(int page);
-void nexUpdatePage(int page);
-
+void showError(String title, String message);
+void inputPosition(String question, int var, String initialValue);
+void inputNumber(String question, int var, int initialValue);
+void gotoPage(int page);
+void updatePage(int page);
 
 //--------------------------------------------
 // Movement defines/variables/functions
@@ -160,7 +160,6 @@ bool imperial;
 float rpm;
 
 bool threading;
-//bool jogging;
 
 float threadCount = 1.0;
 int numStarts = 1;
@@ -193,20 +192,8 @@ void processFeed();
 //--------------------------------------------
 #define goodEepromValue 1984 // arbitrary value, just to check to see if eeprom has been written stored at least once
 
-void eepromGet() {
-  EEPROM.get(4, pulsesPerRev);
-  EEPROM.get(8, stepsPerMM);
-  EEPROM.get(12, acceleration);
-  EEPROM.get(16, maxStepRate);
-}
-
-void eepromPut() {
-  EEPROM.put(0, goodEepromValue);
-  EEPROM.put(4, pulsesPerRev);
-  EEPROM.put(8, stepsPerMM);
-  EEPROM.put(12, acceleration);
-  EEPROM.put(16, maxStepRate);
-}
+void eepromGet();
+void eepromPut();
 
 //--------------------------------------------
 // Setup
@@ -240,7 +227,7 @@ void setup() {
   }
   lsDriver.setAcceleration(acceleration);
   delay(2000);
-  nexGotoPage(btnKnob.read() ? pageMenu : pageSetup);
+  gotoPage(btnKnob.read() ? pageMenu : pageSetup);
 }
 
 void loop() {
@@ -473,6 +460,20 @@ bool closeEnough(float v1, float v2, float tolerance) {
   return (abs(v1 - v2) < tolerance);
 }
 
+void eepromGet() {
+  EEPROM.get(4, pulsesPerRev);
+  EEPROM.get(8, stepsPerMM);
+  EEPROM.get(12, acceleration);
+  EEPROM.get(16, maxStepRate);
+}
+
+void eepromPut() {
+  EEPROM.put(0, goodEepromValue);
+  EEPROM.put(4, pulsesPerRev);
+  EEPROM.put(8, stepsPerMM);
+  EEPROM.put(12, acceleration);
+  EEPROM.put(16, maxStepRate);
+}
 
 // update the Nextion based on which page is currently being displayed
 void updateNextion() {
@@ -513,93 +514,44 @@ void updateNextion() {
   }
 }
 
-String positionString() {
-  return String(current, 3);
-}
-
-String threadString() {
-  return imperial ? String(threadCount, 0) + " tpi" : String(threadCount, 2) + "mm";
-}
-
-String rpmString() {
-  return String((rpm < 0 ? -rpm : rpm), 0);
-}
-
-String feedString() {
-  return String((imperial ? jogFeedSpeed * 60 : jogFeedSpeed), 2) + (imperial ? "ipm" : "mm/s");
-}
-
-String unitString(bool spell) {
-  String ret;
-  if (spell) {
-    ret = imperial ? "Inch" : "Metric";
-  } else {
-    ret = imperial ? "in" : "mm";
-  }
-  return ret;
-}
-
-String floatToString(float in) {
-  String ret = String(in, strConvDigits);
-  for (int i = ret.length() - 1; i > 0; i--)
-  {
-    if (ret.charAt(i) == '0') { 
-      ret.remove(i);
-    } else if (ret.charAt(i) == '.') {
-      ret.remove(i);
-      break;
-    } else {
-
-      break;
-    }
-  }
-  return ret;
-}
-
-String unitsToString(float in) {
-  String ret = floatToString(in);
-  //ret += unitString(false);
-  return ret;
-}
-
-void nexShowError(String title, String message) {
+void showError(String title, String message) {
   nex.writeStr("error.title.txt", "Error" + title);
   nex.writeStr("error.message.txt", message);
   returnPage = currentPage;
-  nexGotoPage(pageError);
+  gotoPage(pageError);
 }
 
-void nexInputPosition(String question, int var, String initialValue) {
+void inputPosition(String question, int var, String initialValue) {
   nex.writeNum("input.integer.val", 0);
   inputPositionValue = initialValue;
   returnPage = currentPage;
   inputPositionVar = var;
   nex.writeStr("input.value.txt", inputPositionValue);
   nex.writeStr("input.q.txt", question);
-  nexGotoPage(pageInputPos);
+  gotoPage(pageInputPos);
 }
 
-void nexInputNumber(String question, int var, int initialValue) {
+void inputNumber(String question, int var, int initialValue) {
   nex.writeNum("input.integer.val", 1);
   inputPositionValue = String(initialValue);
   returnPage = currentPage;
   inputPositionVar = var;
   nex.writeStr("input.value.txt", inputPositionValue);
   nex.writeStr("input.q.txt", question);
-  nexGotoPage(pageInputPos);
+  gotoPage(pageInputPos);
 }
 
 // do full page update and request page change to that updated page
-void nexGotoPage(int page)
+void gotoPage(int page)
 {
-  nexUpdatePage(page);
+  updatePage(page);
   currentPage = page;
   String i = "page ";
   nex.writeStr(i + String(page));
 }
 
 // do full page update
-void nexUpdatePage(int page)
+void updatePage(int page)
 {
   switch (page)
   {
@@ -701,10 +653,10 @@ void trigger0() { // handle UI triggers on input page
           eepromPut();
           break;
       }
-      nexGotoPage(returnPage);
+      gotoPage(returnPage);
       break;
     case keyCancel:
-      nexGotoPage(returnPage);
+      gotoPage(returnPage);
       break;
     case keySign:
       if (inputPositionValue.startsWith("-")) {
@@ -747,7 +699,7 @@ void trigger0() { // handle UI triggers on input page
           nex.writeStr("powerfeed.rightstop.txt", "---");
           break;
       }
-      nexGotoPage(returnPage);
+      gotoPage(returnPage);
       break;
     default:
       if (inputPositionValue == "0") {
@@ -764,13 +716,13 @@ void trigger0() { // handle UI triggers on input page
 void trigger1() { // handle UI triggers on main menu page
   switch (nex.readNumber("menu.key.val")) {
     case 0:
-      nexGotoPage(pageJogFeed);
+      gotoPage(pageJogFeed);
       break;
     case 1:
-      nexGotoPage(pageThreading);
+      gotoPage(pageThreading);
       break;
     case 2:
-      nexGotoPage(pageSetup);
+      gotoPage(pageSetup);
       break;
   }
 }
@@ -794,7 +746,7 @@ void trigger6() { // handle UI triggers on feed page
       break;
     case 3:
       invertUnits();
-      nexUpdatePage(currentPage);
+      updatePage(currentPage);
       break;
     case 4:
       jogFeedMulti = 0.01;
@@ -806,13 +758,13 @@ void trigger6() { // handle UI triggers on feed page
       jogFeedMulti = 1;
       break;
     case 7:
-      nexInputPosition("Left Stop Position (" + unitString(true) + ")", varLeftStop, floatToString(leftStop));
+      inputPosition("Left Stop Position (" + unitString(true) + ")", varLeftStop, floatToString(leftStop));
       break;
     case 8:
-      nexInputPosition("Right Stop Position (" + unitString(true) + ")", varRightStop, floatToString(rightStop));
+      inputPosition("Right Stop Position (" + unitString(true) + ")", varRightStop, floatToString(rightStop));
       break;
     case 9:
-      nexGotoPage(pageMenu);
+      gotoPage(pageMenu);
   }
 }
 
@@ -820,24 +772,24 @@ void trigger7() { // handle UI triggers on threading page
   switch (nex.readNumber("threading.key.val")) {
     case 0: //pitch/tpi button
       invertUnits();
-      nexUpdatePage(currentPage);
+      updatePage(currentPage);
       break;
     case 1:
-      nexGotoPage(pageStarts);
+      gotoPage(pageStarts);
       break;
     case 2:
-      nexGotoPage(pageMenu);
+      gotoPage(pageMenu);
       break;
     case 3:
-      nexInputPosition("Left Stop Position (" + unitString(true) + ")", varLeftStop, floatToString(leftStop));
+      inputPosition("Left Stop Position (" + unitString(true) + ")", varLeftStop, floatToString(leftStop));
       break;
     case 4:
-      nexInputPosition("Right Stop Position (" + unitString(true) + ")", varRightStop, floatToString(rightStop));  
+      inputPosition("Right Stop Position (" + unitString(true) + ")", varRightStop, floatToString(rightStop));  
       break;
     case 5:
       current = 0;
       lsDriver.setCurrentPosition(0);
-      nexUpdatePage(pageThreading);
+      updatePage(pageThreading);
       break;
   }
 }
@@ -847,7 +799,7 @@ void trigger8() { // handle UI triggers on starts page
   switch (val) {
     case 0: //ok
       startOffset = (1.0 / numStarts) * (start - 1);
-      nexGotoPage(pageThreading);
+      gotoPage(pageThreading);
       break;
     default:
       if (val <= 5) {
@@ -856,7 +808,7 @@ void trigger8() { // handle UI triggers on starts page
         numStarts = val - 5;
         if (start > numStarts) { start = numStarts; }
       }
-      nexUpdatePage(pageStarts);
+      updatePage(pageStarts);
       break;
   }  
 }
@@ -865,19 +817,19 @@ void trigger9() { // handle UI triggers on setup page
   int val = nex.readNumber("setup.key.val");
   switch (val) {
     case -1:
-      nexGotoPage(pageMenu);
+      gotoPage(pageMenu);
       break;
     case 0:
-      nexInputNumber("Spindle Pulses/Revolution", varPPR, pulsesPerRev / 4);
+      inputNumber("Spindle Pulses/Revolution", varPPR, pulsesPerRev / 4);
       break;
     case 1:
-      nexInputNumber("Steps/MM", varSPMM, stepsPerMM);
+      inputNumber("Steps/MM", varSPMM, stepsPerMM);
       break;
     case 2:
-      nexInputNumber("Acceleration (x1000)", varAccel, acceleration / 1000);
+      inputNumber("Acceleration (x1000)", varAccel, acceleration / 1000);
       break;
     case 3:
-      nexInputNumber("Maximum Steprate (x1000)", varSteprate, maxStepRate / 1000);
+      inputNumber("Maximum Steprate (x1000)", varSteprate, maxStepRate / 1000);
       break;
   }
 }
@@ -886,7 +838,56 @@ void trigger10() {
   int val = nex.readNumber("error.key.val");
   switch (val) {
     case -1:
-      nexGotoPage(returnPage);
+      gotoPage(returnPage);
       break;
   }
+}
+
+String positionString() {
+  return String(current, 3);
+}
+
+String threadString() {
+  return imperial ? String(threadCount, 0) + " tpi" : String(threadCount, 2) + "mm";
+}
+
+String rpmString() {
+  return String((rpm < 0 ? -rpm : rpm), 0);
+}
+
+String feedString() {
+  return String((imperial ? jogFeedSpeed * 60 : jogFeedSpeed), 2) + (imperial ? "ipm" : "mm/s");
+}
+
+String unitString(bool spell) {
+  String ret;
+  if (spell) {
+    ret = imperial ? "Inch" : "Metric";
+  } else {
+    ret = imperial ? "in" : "mm";
+  }
+  return ret;
+}
+
+String floatToString(float in) {
+  String ret = String(in, strConvDigits);
+  for (int i = ret.length() - 1; i > 0; i--)
+  {
+    if (ret.charAt(i) == '0') { 
+      ret.remove(i);
+    } else if (ret.charAt(i) == '.') {
+      ret.remove(i);
+      break;
+    } else {
+
+      break;
+    }
+  }
+  return ret;
+}
+
+String unitsToString(float in) {
+  String ret = floatToString(in);
+  //ret += unitString(false);
+  return ret;
 }
