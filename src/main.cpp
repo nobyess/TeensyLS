@@ -36,10 +36,10 @@ SOFTWARE.
 bool clock60hz;
 elapsedMillis ellapsed500ms;
 
-elapsedMicros loopTime;
+/*elapsedMicros loopTime;
 int loopTimeMax;
 int loopTimeMin;
-int loopTimeAvg;
+int loopTimeAvg;*/
 
 //--------------------------------------------
 // I/O defines/variables/functions
@@ -103,19 +103,17 @@ void updateIO();
 #define varRightStop  1
 #define varPPR        2
 #define varSPMM       3
+#define varAccel      4
+#define varSteprate   5
 
 EasyNex nex(Serial5);
 
 String inputPositionValue;
-
-int inputPositionLastpage;
 int inputPositionVar;
-int nexCurrentPage;
 
-void updateNextion();
-void nexInputPosition(String question, int returnPage, int var, String initialValue);
-void nexGotoPage(int page);
-void nexUpdatePage(int page);
+int currentPage;
+int returnPage;
+
 String unitString(bool spell);
 String floatToString(float in);
 String unitsToString(float in);
@@ -125,16 +123,33 @@ String rpmString();
 String threadString();
 
 
+void updateNextion();
+void nexInputPosition(String question, int var, String initialValue);
+void nexGotoPage(int page);
+void nexUpdatePage(int page);
+
+
 //--------------------------------------------
 // Movement defines/variables/functions
 //--------------------------------------------
+#define minTPI        4
+#define maxTPI        200
+#define maxMMS        10
+#define maxIPS        0.3937
+#define minMMPT       0.05
+#define maxMMPT       4
+
+#define minAccel      20000
+#define minMaxSR      5000
 
 Encoder spindle(spindleA, spindleB);
 
 AccelStepper lsDriver(1, drvStep, drvDirection);
 
 int pulsesPerRev = 2880;
-int stepsPerMM = 400;
+int stepsPerMM = 800;
+int acceleration = 200000;
+int maxStepRate = 40000;
 
 bool jogAdjust = true;
 float jogFeedMulti = .1;
@@ -145,16 +160,15 @@ bool imperial;
 float rpm;
 
 bool threading;
+//bool jogging;
+
 float threadCount = 1.0;
 int numStarts = 1;
 int start = 1;
 float startOffset;
 
+bool invertSpindle = true;
 int32_t currentSpindle;
-long threadNumber;
-float spindleMod;
-
-bool threadDirection;
 
 float current;
 
@@ -175,13 +189,35 @@ void processThread();
 void processFeed();
 
 //--------------------------------------------
+// System defines/variables/functions
+//--------------------------------------------
+#define goodEepromValue 1984 // arbitrary value, just to check to see if eeprom has been written stored at least once
+
+void eepromGet() {
+  EEPROM.get(4, pulsesPerRev);
+  EEPROM.get(8, stepsPerMM);
+  EEPROM.get(12, acceleration);
+  EEPROM.get(16, maxStepRate);
+}
+
+void eepromPut() {
+  EEPROM.put(0, goodEepromValue);
+  EEPROM.put(4, pulsesPerRev);
+  EEPROM.put(8, stepsPerMM);
+  EEPROM.put(12, acceleration);
+  EEPROM.put(16, maxStepRate);
+}
+
+//--------------------------------------------
 // Setup
 //--------------------------------------------
 
 void setup() {
 
-  //pinMode(spindleA, INPUT);
+  // pinMode for spindle is set up by the encoder library
+  //pinMode(spindleA, INPUT); 
   //pinMode(spindleB, INPUT);
+
   pinMode(knobAIn, INPUT_PULLUP);
   pinMode(knobBIn, INPUT_PULLUP);
   pinMode(btnKnobIn, INPUT_PULLUP);
@@ -194,15 +230,17 @@ void setup() {
   nex.begin(115200);
   Serial.begin(9600);
 
-  EEPROM.get(0, pulsesPerRev);
-  EEPROM.get(4, stepsPerMM);
+  int eepromGood;
+  EEPROM.get(0, eepromGood);
 
-  lsDriver.setAcceleration(50000);
-  lsDriver.setMaxSpeed(100000);
-
+  if (eepromGood == goodEepromValue) {
+    eepromGet();
+  } else {
+    eepromPut();
+  }
+  lsDriver.setAcceleration(acceleration);
   delay(2000);
   nexGotoPage(btnKnob.read() ? pageMenu : pageSetup);
-  loopTime = 0;
 }
 
 void loop() {
@@ -211,33 +249,22 @@ void loop() {
   updateIO();
   updateMovement();
 
-  if (!lsDriver.isRunning() && !threading) { updateNextion(); } //can't update the nextion while the stepper is moving. unfortunately there is still some delay that causes jitter in stepping
+  if (!lsDriver.isRunning() && !threading) {
+    if (ellapsed500ms > 500) {
+      ellapsed500ms = 0;
+      clock60hz = !clock60hz;
 
-  if (ellapsed500ms > 500) {
-    ellapsed500ms = 0;
-    clock60hz = !clock60hz;
-
-    rpm = ((currentSpindle - lastSpindle) / (float)pulsesPerRev) * 120;
-    lastSpindle = currentSpindle;
-  }
-
- /* used for troubleshooting when I was getting missed steps
-  int lt = loopTime;
-  if (lt < loopTimeMin) { loopTimeMin = lt; }
-  if (lt > loopTimeMax) { loopTimeMax = lt; }
-  loopTimeAvg = loopTimeAvg + lt;
-  loopTimeAvg = loopTimeAvg / 2;
-  loopTime = 0;*/
-
+      rpm = ((currentSpindle - lastSpindle) / (float)pulsesPerRev) * 120;
+      lastSpindle = currentSpindle;
+    }
+    updateNextion(); //can't update the nextion while the stepper is moving. unfortunately there is still some delay that causes jitter in stepping
+  } 
 }
 
 void updateMovement() {
-  currentSpindle = -spindle.read();
-
-  threadNumber = floor(currentSpindle / pulsesPerRev);
-  spindleMod = (currentSpindle % pulsesPerRev) / (float)pulsesPerRev;
+  currentSpindle = (invertSpindle ? -spindle.read() : spindle.read());
   
-  switch (nexCurrentPage)
+  switch (currentPage)
   {
   case pageMenu:
   case pageJogFeed:
@@ -251,7 +278,6 @@ void updateMovement() {
   }
 
   lsDriver.run();
-  
   current = stepsToUnits(lsDriver.currentPosition());
 }
 
@@ -276,21 +302,20 @@ void updateIO() {
             jogFeedSpeed += (knobB.read() ? jFM : -jFM);
             if (imperial) {
               if (jogFeedSpeed < jFM) { jogFeedSpeed = jFM; }
-              if (jogFeedSpeed > 0.3937) { jogFeedSpeed = 0.3937; }
+              if (jogFeedSpeed > maxIPS) { jogFeedSpeed = maxIPS; }
             } else {
               if (jogFeedSpeed < jFM) { jogFeedSpeed = jFM; }
-              if (jogFeedSpeed > 10) { jogFeedSpeed = 10; }
+              if (jogFeedSpeed > maxMMS) { jogFeedSpeed = maxMMS; }
             }
             break;
           case pageThreading:
-
             if (imperial) {
               threadCount += knobB.read() ? 1 : -1;
-              if (threadCount < 4) { threadCount = 4; }
+              if (threadCount < minTPI) { threadCount = minTPI; }
             } else {
               threadCount += knobB.read() ? 0.05 : -0.05;
-              if (threadCount < 0.05) { threadCount = 0.05; }
-              if (threadCount > 4) { threadCount = 4; }
+              if (threadCount < minMMPT) { threadCount = minMMPT; }
+              if (threadCount > maxMMPT) { threadCount = maxMMPT; }
             }
             break;
         }
@@ -305,55 +330,78 @@ void updateIO() {
 }
 
 void processThread() {
-  static long target;
-  static long offset;
-  static long sp;
 
-  lsDriver.setMaxSpeed(100000);
+  static float spindlePosition;
+  static bool direction;
+  static long threadNumber;
+  static long target;
+  static long positionOffset;
+  static long threadOffset;
+  
+  // calculate the number of full rotations
+  threadNumber = floor(currentSpindle / pulsesPerRev);
+
+  // give us a number between 0.0 and 1.0 for the orientation of the spindle
+  spindlePosition = (currentSpindle % pulsesPerRev) / (float)pulsesPerRev;
 
   if (threading) {
-    if (threadDirection) {
-      target = offset - spindleToStep((threadNumber - sp) + spindleMod + startOffset);
-      if (target < offset) { target = offset; }
+    if (direction) { // which way are we going. 0 = left, 1 = right.
+      // thread magic - calculate target position based on the current thread number,
+      // current spindle orientation, and add in the offset for the start selected
+      target = positionOffset - spindleToStep((threadNumber - threadOffset) + spindlePosition + startOffset);
+
+      // since we are starting behind the actual thread to cut we have to restrict that movement
+      if (target < positionOffset) { target = positionOffset; }
+
       if (switchEnable.read()) {
         if (btnRight.read()) {
+          // button is not pressed and we are jogging - turn off threading
           threading = 0;
         }
       } else {
         if (target >= rightSteps) {
-          target = rightSteps;
+          // we have hit the end stop - turn off threading
           threading = 0;
+
+          // could have overshot so just bump the target to the exact end stop position
+          target = rightSteps;
         }
       }
     } else {
-      target = offset + spindleToStep((threadNumber - sp) + spindleMod + startOffset);
-      if (target > offset) { target = offset; }
+      target = positionOffset + spindleToStep((threadNumber - threadOffset) + spindlePosition + startOffset);
+      if (target > positionOffset) { target = positionOffset; }
       if (switchEnable.read()) {
         if (btnLeft.read()) {
           threading = 0;
         }
       } else {
         if (target <= leftSteps) {
-          target = leftSteps;
           threading = 0;
+          target = leftSteps;
         }
       }
     }
 
+    // turn threading mode off if the switch is turned off while none of the direction buttons are pressed
     if (switchEnable.read() && btnLeft.read() && btnRight.read()) { threading = false; }
   
+    lsDriver.setMaxSpeed(maxStepRate);
     lsDriver.moveTo(target);
   } else {
+    // threading mode is not on so we must check for user input
+    // switch off - check for only a direction button press for jogging 
+    // switch on - check for direction button press but the end stop must be enabled and the current position can't exceed it
     if (switchEnable.read() ? !btnLeft.read() : (!btnLeft.read() && leftStopOn && lsDriver.currentPosition() > leftSteps)) {
-      threadDirection = false;
+      // set up for a new thread operation
+      direction = false;
       threading = true;
-      sp = threadNumber - 1;
-      offset = lsDriver.currentPosition();
+      threadOffset = threadNumber - 1; // fall back behind the current position by 1 thread
+      positionOffset = lsDriver.currentPosition(); // save the current position as the offset
     } else if (switchEnable.read() ? !btnRight.read() : (!btnRight.read() && rightStopOn && lsDriver.currentPosition() < rightSteps)) {
-      threadDirection = true;
+      direction = true;
       threading = true;
-      sp = threadNumber - 1;
-      offset = lsDriver.currentPosition();
+      threadOffset = threadNumber - 1;
+      positionOffset = lsDriver.currentPosition();
     }
   }
 }
@@ -380,7 +428,6 @@ void processFeed() {
   }
 }
 
-
 void invertUnits() {
   if (imperial) {
     imperial = false;
@@ -402,6 +449,7 @@ void invertUnits() {
 
   }
 }
+
 
 float stepsToUnits(long in) {
   return in / (imperial ? stepsPerMM * 25.4 : stepsPerMM);
@@ -432,7 +480,7 @@ void updateNextion() {
 
   nex.NextionListen();
 
-  switch (nexCurrentPage)
+  switch (currentPage)
   {
   case pageDebug:
     break;
@@ -514,38 +562,43 @@ String unitsToString(float in) {
   return ret;
 }
 
-void nexShowError(String title, String description, int returnPage) {
-
+void nexShowError(String title, String message) {
+  nex.writeStr("error.title.txt", "Error" + title);
+  nex.writeStr("error.message.txt", message);
+  returnPage = currentPage;
+  nexGotoPage(pageError);
 }
 
-void nexInputPosition(String question, int returnPage, int var, String initialValue) {
+void nexInputPosition(String question, int var, String initialValue) {
   nex.writeNum("input.integer.val", 0);
   inputPositionValue = initialValue;
-  inputPositionLastpage = returnPage;
+  returnPage = currentPage;
   inputPositionVar = var;
   nex.writeStr("input.value.txt", inputPositionValue);
   nex.writeStr("input.q.txt", question);
   nexGotoPage(pageInputPos);
 }
 
-void nexInputNumber(String question, int returnPage, int var, int initialValue) {
+void nexInputNumber(String question, int var, int initialValue) {
   nex.writeNum("input.integer.val", 1);
   inputPositionValue = String(initialValue);
-  inputPositionLastpage = returnPage;
+  returnPage = currentPage;
   inputPositionVar = var;
   nex.writeStr("input.value.txt", inputPositionValue);
   nex.writeStr("input.q.txt", question);
   nexGotoPage(pageInputPos);
 }
 
+// do full page update and request page change to that updated page
 void nexGotoPage(int page)
 {
   nexUpdatePage(page);
-  nexCurrentPage = page;
+  currentPage = page;
   String i = "page ";
   nex.writeStr(i + String(page));
 }
 
+// do full page update
 void nexUpdatePage(int page)
 {
   switch (page)
@@ -582,13 +635,15 @@ void nexUpdatePage(int page)
       nex.writeNum("starts.b9.bco", numStarts == 5 ? 26051 : 65535);
       break;
     case pageSetup:
-      nex.writeStr("setup.ppr.txt", String(pulsesPerRev));
+      nex.writeStr("setup.ppr.txt", String(pulsesPerRev / 4));
       nex.writeStr("setup.spmm.txt", String(stepsPerMM));
+      nex.writeStr("setup.accel.txt", String(acceleration / 1000));
+      nex.writeStr("setup.steprate.txt", String(maxStepRate / 1000));
       break;
   }
 }
 
-void trigger0() { // handle positional input keypad buttons and display
+void trigger0() { // handle UI triggers on input page
   static String displayString;
   static String p;
   int keyVal = nex.readNumber("input.key.val");
@@ -623,18 +678,33 @@ void trigger0() { // handle positional input keypad buttons and display
           nex.writeStr("powerfeed.rightstop.txt", (rightStopOn ? unitsToString(rightStop) : ""));
           break;
         case varPPR:
-          pulsesPerRev = inputPositionValue.toInt();
-          EEPROM.put(0, pulsesPerRev);
+          pulsesPerRev = inputPositionValue.toInt() * 4;
+          if (pulsesPerRev < 1) { pulsesPerRev = 1; }
+          nex.writeStr("setup.ppr.txt", String(pulsesPerRev / 4));
+          eepromPut();
           break;
         case varSPMM:
           stepsPerMM = inputPositionValue.toInt();
-          EEPROM.put(4, stepsPerMM);
+          if (stepsPerMM < 1) { stepsPerMM = 1; }
+          nex.writeStr("setup.spmm.txt", String(stepsPerMM));
+          eepromPut();
+          break;
+        case varAccel:
+          acceleration = inputPositionValue.toInt() * 1000;
+          nex.writeStr("setup.accel.txt", String(acceleration / 1000));
+          lsDriver.setAcceleration(acceleration);
+          eepromPut();
+          break;
+        case varSteprate:
+          maxStepRate = inputPositionValue.toInt() * 1000;
+          nex.writeStr("setup.steprate.txt", String(maxStepRate / 1000));
+          eepromPut();
           break;
       }
-      nexGotoPage(inputPositionLastpage);
+      nexGotoPage(returnPage);
       break;
     case keyCancel:
-      nexGotoPage(inputPositionLastpage);
+      nexGotoPage(returnPage);
       break;
     case keySign:
       if (inputPositionValue.startsWith("-")) {
@@ -676,14 +746,8 @@ void trigger0() { // handle positional input keypad buttons and display
           rightStop = 0;
           nex.writeStr("powerfeed.rightstop.txt", "---");
           break;
-        case varPPR:
-          pulsesPerRev = 2880;
-          break;
-        case varSPMM:
-          stepsPerMM = 400;
-          break;
       }
-      nexGotoPage(inputPositionLastpage);
+      nexGotoPage(returnPage);
       break;
     default:
       if (inputPositionValue == "0") {
@@ -695,10 +759,9 @@ void trigger0() { // handle positional input keypad buttons and display
   }
   
   nex.writeStr("input.value.txt", inputPositionValue);
-
 }
 
-void trigger1() {
+void trigger1() { // handle UI triggers on main menu page
   switch (nex.readNumber("menu.key.val")) {
     case 0:
       nexGotoPage(pageJogFeed);
@@ -706,10 +769,13 @@ void trigger1() {
     case 1:
       nexGotoPage(pageThreading);
       break;
+    case 2:
+      nexGotoPage(pageSetup);
+      break;
   }
 }
 
-void trigger6() { // handle buttons on feed menu
+void trigger6() { // handle UI triggers on feed page
   switch (nex.readNumber("powerfeed.key.val")) {
     case 0:
       leftStop = current;
@@ -728,7 +794,7 @@ void trigger6() { // handle buttons on feed menu
       break;
     case 3:
       invertUnits();
-      nexUpdatePage(nexCurrentPage);
+      nexUpdatePage(currentPage);
       break;
     case 4:
       jogFeedMulti = 0.01;
@@ -740,21 +806,21 @@ void trigger6() { // handle buttons on feed menu
       jogFeedMulti = 1;
       break;
     case 7:
-      nexInputPosition("Left Stop Position (" + unitString(true) + ")", pageJogFeed, varLeftStop, floatToString(leftStop));
+      nexInputPosition("Left Stop Position (" + unitString(true) + ")", varLeftStop, floatToString(leftStop));
       break;
     case 8:
-      nexInputPosition("Right Stop Position (" + unitString(true) + ")", pageJogFeed, varRightStop, floatToString(rightStop));
+      nexInputPosition("Right Stop Position (" + unitString(true) + ")", varRightStop, floatToString(rightStop));
       break;
     case 9:
       nexGotoPage(pageMenu);
   }
 }
 
-void trigger7() {
+void trigger7() { // handle UI triggers on threading page
   switch (nex.readNumber("threading.key.val")) {
     case 0: //pitch/tpi button
       invertUnits();
-      nexUpdatePage(pageThreading);
+      nexUpdatePage(currentPage);
       break;
     case 1:
       nexGotoPage(pageStarts);
@@ -763,10 +829,10 @@ void trigger7() {
       nexGotoPage(pageMenu);
       break;
     case 3:
-      nexInputPosition("Left Stop Position (" + unitString(true) + ")", pageThreading, varLeftStop, floatToString(leftStop));
+      nexInputPosition("Left Stop Position (" + unitString(true) + ")", varLeftStop, floatToString(leftStop));
       break;
     case 4:
-      nexInputPosition("Right Stop Position (" + unitString(true) + ")", pageThreading, varRightStop, floatToString(rightStop));  
+      nexInputPosition("Right Stop Position (" + unitString(true) + ")", varRightStop, floatToString(rightStop));  
       break;
     case 5:
       current = 0;
@@ -776,7 +842,7 @@ void trigger7() {
   }
 }
 
-void trigger8() {
+void trigger8() { // handle UI triggers on starts page
   int val = nex.readNumber("starts.key.val");
   switch (val) {
     case 0: //ok
@@ -795,17 +861,32 @@ void trigger8() {
   }  
 }
 
-void trigger9() {
+void trigger9() { // handle UI triggers on setup page
   int val = nex.readNumber("setup.key.val");
   switch (val) {
     case -1:
       nexGotoPage(pageMenu);
       break;
     case 0:
-      nexInputNumber("Spindle Pulse/Revolution", pageSetup, varPPR, pulsesPerRev);
+      nexInputNumber("Spindle Pulses/Revolution", varPPR, pulsesPerRev / 4);
       break;
     case 1:
-      nexInputNumber("Steps/MM", pageSetup, varSPMM, stepsPerMM);
+      nexInputNumber("Steps/MM", varSPMM, stepsPerMM);
+      break;
+    case 2:
+      nexInputNumber("Acceleration (x1000)", varAccel, acceleration / 1000);
+      break;
+    case 3:
+      nexInputNumber("Maximum Steprate (x1000)", varSteprate, maxStepRate / 1000);
+      break;
+  }
+}
+
+void trigger10() {
+  int val = nex.readNumber("error.key.val");
+  switch (val) {
+    case -1:
+      nexGotoPage(returnPage);
       break;
   }
 }
