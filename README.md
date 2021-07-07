@@ -1,2 +1,2 @@
-TeensyLS. An electronic leadscrew controller for your lathe
+LatheBot. An electronic leadscrew controller for your lathe
 ====================
